@@ -44,65 +44,74 @@ const getAuthURL = () =>
 const getToken = code =>
   wrapPromise(
     OAUTH2_CLIENT.getToken(code).then(res =>
-      updateConfig(_.mapKeys(res.tokens, (value, key) => `SHEETS_${key.toUpperCase()}`))
-    ),
-    `Fetching token for code ${code}`
-  )
+         updateConfig(_.mapKeys(res.tokens, (value, key) => `SHEETS_${key.toUpperCase()}`))
+       ),
+       `Fetching token for code ${code}`
+     )
 
-const getSheets = spreadsheetId =>
-  wrapPromise(
-    promisify(sheets.spreadsheets.get, { spreadsheetId: spreadsheetId }).then(res => res.data.sheets),
-    `Fetching sheets for spreadsheet ID ${spreadsheetId}`
-  )
+   const getSheets = spreadsheetId =>
+     wrapPromise(
+       promisify(sheets.spreadsheets.get, { spreadsheetId: spreadsheetId }).then(res => res.data.sheets),
+       `Fetching sheets for spreadsheet ID ${spreadsheetId}`
+     )
 
-const duplicateSheet = (sourceSpreadsheetId, sourceSheetId) =>
-  wrapPromise(
-    promisify(sheets.spreadsheets.sheets.copyTo, {
-      spreadsheetId: sourceSpreadsheetId,
-      sheetId: sourceSheetId,
-      resource: { destinationSpreadsheetId: process.env.SHEETS_SHEET_ID }
-    }).then(res => ({ properties: res.data })),
-    `Duplicating sheet ${sourceSheetId}`
-  )
+   const getRange = (spreadsheetId, range) =>
+     wrapPromise(
+       promisify(sheets.spreadsheets.values.get, { 
+         spreadsheetId: spreadsheetId, 
+         range: range, 
+         valueRenderOption: 'UNFORMATTED_VALUE' }).then(res => res.data.values),
+       `Fetching sheet range ${range} for spreadsheet ID ${spreadsheetId}`
+     )
 
-const addSheet = title =>
-  wrapPromise(
-    promisify(sheets.spreadsheets.batchUpdate, {
-      spreadsheetId: process.env.SHEETS_SHEET_ID,
-      resource: { requests: [{ addSheet: { properties: { title } } }] }
-    }).then(res => res.data.replies[0].addSheet),
-    `Creating new sheet ${title}`
-  )
+   const duplicateSheet = (sourceSpreadsheetId, sourceSheetId) =>
+     wrapPromise(
+       promisify(sheets.spreadsheets.sheets.copyTo, {
+         spreadsheetId: sourceSpreadsheetId,
+         sheetId: sourceSheetId,
+         resource: { destinationSpreadsheetId: process.env.SHEETS_SHEET_ID }
+       }).then(res => ({ properties: res.data })),
+       `Duplicating sheet ${sourceSheetId}`
+     )
 
-const renameSheet = (sheetId, title) =>
-  wrapPromise(
-    promisify(sheets.spreadsheets.batchUpdate, {
-      spreadsheetId: process.env.SHEETS_SHEET_ID,
-      resource: {
-        requests: [{ updateSheetProperties: { properties: { sheetId: sheetId, title: title }, fields: 'title' } }]
-      }
-    }).then(res => res.data),
-    `Renaming sheet ${title}`
-  )
+   const addSheet = title =>
+     wrapPromise(
+       promisify(sheets.spreadsheets.batchUpdate, {
+         spreadsheetId: process.env.SHEETS_SHEET_ID,
+         resource: { requests: [{ addSheet: { properties: { title } } }] }
+       }).then(res => res.data.replies[0].addSheet),
+       `Creating new sheet ${title}`
+     )
 
-const clearRanges = ranges => {
-  return wrapPromise(
-    promisify(sheets.spreadsheets.values.batchClear, { spreadsheetId: process.env.SHEETS_SHEET_ID, ranges }),
-    `Clearing ranges ${ranges.join(', ')}`
-  )
-}
+   const renameSheet = (sheetId, title) =>
+     wrapPromise(
+       promisify(sheets.spreadsheets.batchUpdate, {
+         spreadsheetId: process.env.SHEETS_SHEET_ID,
+         resource: {
+           requests: [{ updateSheetProperties: { properties: { sheetId: sheetId, title: title }, fields: 'title' } }]
+         }
+       }).then(res => res.data),
+       `Renaming sheet ${title}`
+     )
 
-const updateRanges = updatedRanges =>
-  wrapPromise(
-    promisify(sheets.spreadsheets.values.batchUpdate, {
-      spreadsheetId: process.env.SHEETS_SHEET_ID,
-      resource: {
-        valueInputOption: `USER_ENTERED`,
-        data: updatedRanges
-      }
-    }),
-    `Updating cell ranges ${_.map(updatedRanges, d => d.range).join(', ')}`
-  )
+   const clearRanges = ranges => {
+     return wrapPromise(
+       promisify(sheets.spreadsheets.values.batchClear, { spreadsheetId: process.env.SHEETS_SHEET_ID, ranges }),
+       `Clearing ranges ${ranges.join(', ')}`
+     )
+   }
+
+   const updateRanges = updatedRanges =>
+     wrapPromise(
+       promisify(sheets.spreadsheets.values.batchUpdate, {
+         spreadsheetId: process.env.SHEETS_SHEET_ID,
+         resource: {
+           valueInputOption: `USER_ENTERED`,
+           data: updatedRanges
+         }
+       }),
+       `Updating cell ranges ${_.map(updatedRanges, d => d.range).join(', ')}`
+   )
 
 const formatSheets = (sheetIds, numColumnsToResize) =>
   wrapPromise(
@@ -141,6 +150,34 @@ const formatSheets = (sheetIds, numColumnsToResize) =>
     }),
     `Formatting sheets ${sheetIds.join(', ')}`
   )
+
+const updateTransactionCategory = async (transactions, mapRangeAddress) => {
+  // Handle category overrides defined in config
+  let sheets = await getSheets(process.env.SHEETS_SHEET_ID)
+  let mapRange = await getRange(process.env.SHEETS_SHEET_ID, mapRangeAddress)
+  let mapHeaders = mapRange[0]
+  mapRange = _.drop(mapRange)
+
+  let i = 0
+  let columnIndex = []
+  _.forEach(mapHeaders, cell => {
+     columnIndex[cell] = i++
+  })
+
+  return _.map(transactions, transaction => {
+    _.set(transaction, 'valid cat', 'FALSE')
+    _.forEach(mapRange, override => {
+      if (new RegExp(override[columnIndex["regex"]], 'i').test(transaction.name)
+          && (override[1] == '' || 
+             parseFloat(override[columnIndex['amount']]) === transaction.amount)) {
+        _.set(transaction, 'category.0', _.get(override, columnIndex['category.0'], ''))
+        _.set(transaction, 'category.1', _.get(override, columnIndex['category.1'], ''))
+        _.set(transaction, 'valid cat', '')
+      }
+    })
+    return transaction
+  })
+}
 
 const updateSheets = async (updates, options) => {
   const {
@@ -214,6 +251,8 @@ module.exports = {
   addSheet,
   renameSheet,
   clearRanges,
+  getRange,
   updateRanges,
-  updateSheets
+  updateSheets,
+  updateTransactionCategory
 }

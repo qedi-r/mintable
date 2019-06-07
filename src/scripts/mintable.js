@@ -37,8 +37,24 @@
   //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
   // MANIPULATE TRANSACTIONS
   //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
+  switch (process.env.CATEGORY_PROVIDER) {
+    case "sheets": 
+      console.log(`Updating transactions with items in ${process.env.CATEGORY_OVERRIDE_MAP}`)
+      transactions = await require('../lib/google').updateTransactionCategory(transactions, process.env.CATEGORY_OVERRIDE_MAP)
+      break
+    case "json": 
+      console.log(`Updating transactions with expressions in CATEGORY_OVERRIDES`)
+      transactions = await require('../lib/json').updateTransactionCategory(transactions, process.env.CATEGORY_OVERRIDES)
+      break
+  }
+   
   transactions = _.sortBy(transactions, 'date')
+
+  console.log(transactions.length)
+  transactions = _.remove(transactions, function(transaction) {
+     return ! _.includes(process.env.IGNORED_ACCOUNTS, transaction.account)
+  })
+  console.log(transactions.length)
 
   /*
    * Explode out properties of transaction objects based on TRANSACTION_COLUMNS.
